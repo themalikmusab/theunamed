@@ -1,0 +1,418 @@
+// Prisma Schema for Classcheck Wellness Platform
+// Database: PostgreSQL
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ============================================
+// USER MANAGEMENT
+// ============================================
+
+model User {
+  id        Int      @id @default(autoincrement())
+  email     String   @unique
+  password  String // Hashed with bcrypt
+  name      String
+  role      Role     @default(STUDENT)
+
+  // Profile
+  avatar    String?
+  phone     String?
+  dateOfBirth DateTime?
+
+  // Status
+  isVerified Boolean @default(false)
+  isActive   Boolean @default(true)
+
+  // Timestamps
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  lastLogin DateTime?
+
+  // Relations
+  wellnessCheckins      WellnessCheckin[]
+  wellnessSettings      WellnessSettings?
+  studySessions         StudySession[]
+  breakLogs             BreakLog[]
+  wellnessInsights      WellnessInsight[]
+  resourceUsage         WellnessResourceUsage[]
+  analyticsSnapshots    WellnessAnalyticsSnapshot[]
+
+  // Educator relations
+  alertsReceived        EducatorWellnessAlert[] @relation("EducatorAlerts")
+  alertsTriggered       EducatorWellnessAlert[] @relation("StudentAlerts")
+
+  @@index([email])
+  @@index([role])
+  @@map("users")
+}
+
+enum Role {
+  STUDENT
+  EDUCATOR
+  ADMIN
+}
+
+// ============================================
+// WELLNESS TRACKING
+// ============================================
+
+model WellnessCheckin {
+  id            Int      @id @default(autoincrement())
+  userId        Int
+
+  // Mood data
+  moodScore     Int // 1-5 (1=Very Stressed, 5=Great)
+  stressLevel   StressLevel
+  energyLevel   Int? // 1-5
+
+  // Optional journal
+  journalEntry  String? @db.Text
+
+  // Context
+  checkinType   CheckinType @default(DAILY)
+  isAnonymous   Boolean @default(false)
+
+  // Timestamps
+  createdAt     DateTime @default(now())
+
+  // Relations
+  user          User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+  @@index([moodScore, stressLevel, createdAt])
+  @@map("wellness_checkins")
+}
+
+enum StressLevel {
+  LOW
+  MEDIUM
+  HIGH
+  VERY_HIGH
+}
+
+enum CheckinType {
+  DAILY
+  POST_QUIZ
+  POST_STUDY
+  MANUAL
+}
+
+// ============================================
+// WELLNESS SETTINGS
+// ============================================
+
+model WellnessSettings {
+  id        Int      @id @default(autoincrement())
+  userId    Int      @unique
+
+  // Break reminder settings
+  breakRemindersEnabled Boolean @default(true)
+  breakIntervalMinutes  Int     @default(25) // Pomodoro default
+  breakDurationMinutes  Int     @default(5)
+  reminderSound         ReminderSound @default(GENTLE)
+
+  // Privacy settings
+  shareWithEducators    Boolean @default(false)
+  shareAggregateOnly    Boolean @default(true)
+  educatorAlertThreshold AlertThreshold @default(VERY_HIGH)
+
+  // Notification preferences
+  dailyCheckinReminder  Boolean @default(true)
+  checkinReminderTime   String  @default("20:00:00") // HH:MM:SS format
+  wellnessInsightsEnabled Boolean @default(true)
+
+  // Premium status
+  isPremium             Boolean @default(false)
+  premiumExpiresAt      DateTime?
+
+  // Timestamps
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relations
+  user      User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("wellness_settings")
+}
+
+enum ReminderSound {
+  GENTLE
+  CHIME
+  SILENT
+}
+
+enum AlertThreshold {
+  HIGH
+  VERY_HIGH
+  DISABLED
+}
+
+// ============================================
+// STUDY SESSIONS & BREAKS
+// ============================================
+
+model StudySession {
+  id            Int      @id @default(autoincrement())
+  userId        Int
+
+  sessionStart  DateTime
+  sessionEnd    DateTime?
+
+  subject       String?
+  activityType  ActivityType @default(GENERAL)
+
+  breaksTaken   Int @default(0)
+  totalBreakMinutes Int @default(0)
+
+  sessionRating Int? // 1-5, asked at end
+
+  createdAt     DateTime @default(now())
+
+  // Relations
+  user          User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  breaks        BreakLog[]
+
+  @@index([userId, sessionStart])
+  @@index([sessionEnd]) // NULL sessions are active
+  @@map("study_sessions")
+}
+
+enum ActivityType {
+  FLASHCARDS
+  NOTES
+  QUIZ
+  GENERAL
+}
+
+model BreakLog {
+  id              Int      @id @default(autoincrement())
+  userId          Int
+  studySessionId  Int?
+
+  breakStart      DateTime
+  breakEnd        DateTime?
+
+  breakType       BreakType @default(SCHEDULED)
+  activityTaken   BreakActivity?
+
+  createdAt       DateTime @default(now())
+
+  // Relations
+  user            User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  studySession    StudySession? @relation(fields: [studySessionId], references: [id], onDelete: SetNull)
+
+  @@index([userId, breakStart])
+  @@map("break_logs")
+}
+
+enum BreakType {
+  SCHEDULED
+  MANUAL
+  FORCED
+}
+
+enum BreakActivity {
+  BREATHING
+  WALK
+  HYDRATION
+  STRETCH
+  MEDITATION
+  OTHER
+  SKIPPED
+}
+
+// ============================================
+// INSIGHTS & RECOMMENDATIONS
+// ============================================
+
+model WellnessInsight {
+  id          Int      @id @default(autoincrement())
+  userId      Int
+
+  insightType InsightType
+  title       String
+  description String @db.Text
+  dataJson    Json? // Additional context (e.g., chart data)
+
+  priority    Priority @default(MEDIUM)
+  isRead      Boolean @default(false)
+
+  expiresAt   DateTime?
+  createdAt   DateTime @default(now())
+
+  // Relations
+  user        User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, isRead, createdAt])
+  @@index([priority, createdAt])
+  @@map("wellness_insights")
+}
+
+enum InsightType {
+  PATTERN
+  ACHIEVEMENT
+  RECOMMENDATION
+  ALERT
+}
+
+enum Priority {
+  LOW
+  MEDIUM
+  HIGH
+}
+
+// ============================================
+// EDUCATOR FEATURES
+// ============================================
+
+model EducatorWellnessAlert {
+  id              Int      @id @default(autoincrement())
+  studentId       Int
+  educatorId      Int
+
+  alertType       EducatorAlertType
+  severity        Severity @default(MEDIUM)
+  message         String @db.Text
+  dataSummary     Json? // Aggregate data, not detailed entries
+
+  isAcknowledged  Boolean @default(false)
+  acknowledgedAt  DateTime?
+  actionTaken     String? @db.Text
+
+  createdAt       DateTime @default(now())
+
+  // Relations
+  student         User @relation("StudentAlerts", fields: [studentId], references: [id], onDelete: Cascade)
+  educator        User @relation("EducatorAlerts", fields: [educatorId], references: [id], onDelete: Cascade)
+
+  @@index([educatorId, isAcknowledged, createdAt])
+  @@index([studentId, createdAt])
+  @@map("educator_wellness_alerts")
+}
+
+enum EducatorAlertType {
+  HIGH_STRESS
+  DECLINING_WELLNESS
+  MISSED_CHECKINS
+  BURNOUT_RISK
+}
+
+enum Severity {
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+// ============================================
+// WELLNESS RESOURCES
+// ============================================
+
+model WellnessResource {
+  id            Int      @id @default(autoincrement())
+
+  type          ResourceType
+  title         String
+  description   String @db.Text
+  contentUrl    String?
+
+  durationMinutes Int?
+  thumbnailUrl  String?
+  tags          Json? // ["anxiety", "exam-stress", "sleep"]
+
+  targetRegion  String @default("IN") // Country code
+  isPremium     Boolean @default(false)
+
+  // Stats
+  viewCount     Int @default(0)
+  ratingAvg     Decimal @default(0) @db.Decimal(3, 2)
+  ratingCount   Int @default(0)
+
+  isActive      Boolean @default(true)
+
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  // Relations
+  usage         WellnessResourceUsage[]
+
+  @@index([type, targetRegion, isActive])
+  @@index([isPremium, isActive])
+  @@map("wellness_resources")
+}
+
+enum ResourceType {
+  MEDITATION
+  BREATHING
+  ARTICLE
+  VIDEO
+  CRISIS_HOTLINE
+  TIP
+}
+
+model WellnessResourceUsage {
+  id          Int      @id @default(autoincrement())
+  userId      Int
+  resourceId  Int
+
+  action      ResourceAction
+  rating      Int? // 1-5, only for 'rate' action
+  durationSeconds Int?
+
+  createdAt   DateTime @default(now())
+
+  // Relations
+  user        User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  resource    WellnessResource @relation(fields: [resourceId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+  @@index([resourceId, action])
+  @@map("wellness_resource_usage")
+}
+
+enum ResourceAction {
+  VIEW
+  COMPLETE
+  FAVORITE
+  RATE
+}
+
+// ============================================
+// ANALYTICS & REPORTING
+// ============================================
+
+model WellnessAnalyticsSnapshot {
+  id            Int      @id @default(autoincrement())
+  userId        Int
+  snapshotDate  DateTime @db.Date
+
+  // Mood metrics
+  avgMoodScore  Decimal? @db.Decimal(3, 2)
+  moodVariance  Decimal? @db.Decimal(3, 2)
+  highStressDays Int @default(0)
+
+  // Study patterns
+  totalStudyMinutes Int @default(0)
+  totalBreakMinutes Int @default(0)
+  avgSessionLength  Int @default(0)
+  breaksTaken       Int @default(0)
+
+  // Engagement
+  checkinsCompleted Int @default(0)
+  resourcesAccessed Int @default(0)
+
+  createdAt     DateTime @default(now())
+
+  // Relations
+  user          User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, snapshotDate])
+  @@index([userId, snapshotDate])
+  @@map("wellness_analytics_snapshots")
+}
